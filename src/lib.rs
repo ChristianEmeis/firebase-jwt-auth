@@ -57,7 +57,7 @@ pub struct FirebaseClaims {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GoogleAuthenticationError {
+pub enum FirebaseAuthenticationError {
     #[error("Failed to accquire lock on Google keys cache mutex")]
     KeyCacheMutexLockFailed,
 
@@ -93,15 +93,15 @@ pub enum GoogleAuthenticationError {
 pub async fn extract_firebase_token_claims(
     token: &str,
     firebase_id: &str,
-) -> Result<FirebaseClaims, GoogleAuthenticationError> {
+) -> Result<FirebaseClaims, FirebaseAuthenticationError> {
     update_google_keys_cache_if_required().await?;
 
     if let Some(ref cached_keys) = *(GOOGLE_PUBLC_KEYS_CACHE
         .lock()
-        .map_err(|_| GoogleAuthenticationError::KeyCacheMutexLockFailed)?)
+        .map_err(|_| FirebaseAuthenticationError::KeyCacheMutexLockFailed)?)
     {
         let token_header =
-            decode_header(token).map_err(|err| GoogleAuthenticationError::JwtValidationFailed {
+            decode_header(token).map_err(|err| FirebaseAuthenticationError::JwtValidationFailed {
                 detail: Some(String::from("Failed to decode JWT header")),
                 source: Some(err),
             })?;
@@ -109,7 +109,7 @@ pub async fn extract_firebase_token_claims(
         let key_id =
             token_header
                 .kid
-                .ok_or_else(|| GoogleAuthenticationError::JwtValidationFailed {
+                .ok_or_else(|| FirebaseAuthenticationError::JwtValidationFailed {
                     detail: Some(String::from(
                         "kid is not present or couldn't be extrated from JWT",
                     )),
@@ -120,7 +120,7 @@ pub async fn extract_firebase_token_claims(
             .keys
             .iter()
             .find(|x| x.kid == key_id)
-            .ok_or_else(|| GoogleAuthenticationError::NoMatchingKey)?;
+            .ok_or_else(|| FirebaseAuthenticationError::NoMatchingKey)?;
 
         let decoding_key = DecodingKey::from_rsa_components(&key.n, &key.e);
 
@@ -144,13 +144,13 @@ pub async fn extract_firebase_token_claims(
         ));
 
         let token_data: TokenData<FirebaseClaims> = decode(token, &decoding_key, &validation)
-            .map_err(|err| GoogleAuthenticationError::JwtValidationFailed {
+            .map_err(|err| FirebaseAuthenticationError::JwtValidationFailed {
                 detail: None,
                 source: Some(err),
             })?;
 
         if token_data.claims.sub.is_empty() {
-            return Err(GoogleAuthenticationError::JwtValidationFailed {
+            return Err(FirebaseAuthenticationError::JwtValidationFailed {
                 detail: Some(String::from(
                     "sub must be a non-empty string and must be the uid of the user or device",
                 )),
@@ -165,7 +165,7 @@ pub async fn extract_firebase_token_claims(
                 .try_into()
                 .expect("Failed to convert usize to i64")
         {
-            return Err(GoogleAuthenticationError::JwtValidationFailed {
+            return Err(FirebaseAuthenticationError::JwtValidationFailed {
                 detail: Some(String::from("auth_time must be in the past. auth_time is the time when the user was authenticated")),
                 source: None,
             });
@@ -173,33 +173,33 @@ pub async fn extract_firebase_token_claims(
 
         Ok(token_data.claims)
     } else {
-        return Err(GoogleAuthenticationError::MissingKeys);
+        return Err(FirebaseAuthenticationError::MissingKeys);
     }
 }
 
-async fn update_google_keys_cache_if_required() -> Result<(), GoogleAuthenticationError> {
+async fn update_google_keys_cache_if_required() -> Result<(), FirebaseAuthenticationError> {
     let cached_keys = &mut *GOOGLE_PUBLC_KEYS_CACHE
         .lock()
-        .map_err(|_| GoogleAuthenticationError::KeyCacheMutexLockFailed)?;
+        .map_err(|_| FirebaseAuthenticationError::KeyCacheMutexLockFailed)?;
 
     let requires_fetch = match *cached_keys {
         Some(ref keys) => {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(|err| GoogleAuthenticationError::FetchKeysFailed {
+                .map_err(|err| FirebaseAuthenticationError::FetchKeysFailed {
                     detail: String::from("Failed to get duration since UNIX_EPOCH"),
                     source: Some(Box::new(err)),
                 })?;
 
             // 10 seconds of leeway
-            keys.expires.as_secs() - 10 > now.as_secs()
+            keys.expires.as_secs() - 10 < now.as_secs()
         }
         None => true,
     };
 
     if requires_fetch {
         let resp = reqwest::get(GOOGLE_JWK_URL).await.map_err(|err| {
-            GoogleAuthenticationError::FetchKeysFailed {
+            FirebaseAuthenticationError::FetchKeysFailed {
                 detail: String::from("Request for Google auth keys failed"),
                 source: Some(Box::new(err)),
             }
@@ -208,26 +208,26 @@ async fn update_google_keys_cache_if_required() -> Result<(), GoogleAuthenticati
         let max_age: usize = match resp.headers().get("cache-control") {
             Some(value) => {
                 let re = Regex::new("max-age=([0-9]*)").unwrap();
-                let value_str = value.to_str().map_err(|err| GoogleAuthenticationError::FetchKeysFailed {
+                let value_str = value.to_str().map_err(|err| FirebaseAuthenticationError::FetchKeysFailed {
                     detail: String::from("Failed to covert cache-control header value bytes into str"),                  
                     source: Some(Box::new(err))
                 })?;
-                let captures = re.captures(value_str).ok_or(GoogleAuthenticationError::FetchKeysFailed {
+                let captures = re.captures(value_str).ok_or(FirebaseAuthenticationError::FetchKeysFailed {
                     detail: String::from(format!("Failed to extract max-age from cache-control header due to no regex match. cache-control={}", value_str)),
                     source: None,
                 })?;
 
-                let max_age_str = captures.get(1).ok_or(GoogleAuthenticationError::FetchKeysFailed {
+                let max_age_str = captures.get(1).ok_or(FirebaseAuthenticationError::FetchKeysFailed {
                     detail: String::from(format!("Failed to extract max-age from cache-control header due to no regex match. cache-control={}", value_str)),
                     source: None,
                 })?.as_str();
 
-                max_age_str.parse::<usize>().map_err(|err| GoogleAuthenticationError::FetchKeysFailed {
+                max_age_str.parse::<usize>().map_err(|err| FirebaseAuthenticationError::FetchKeysFailed {
                     detail: String::from("max-age was extracted from the cache-control header but could not be parsed as usize"),
                     source: Some(Box::new(err))
                 })?
             },
-            None => return Err(GoogleAuthenticationError::FetchKeysFailed {
+            None => return Err(FirebaseAuthenticationError::FetchKeysFailed {
                 detail: String::from("Failed to extract max-age from cache-control header because the header wasn't present"),
                 source: None,
             })
@@ -236,7 +236,7 @@ async fn update_google_keys_cache_if_required() -> Result<(), GoogleAuthenticati
         let now = SystemTime::now();
 
         let mut expires = now.duration_since(UNIX_EPOCH).map_err(|err| {
-            GoogleAuthenticationError::FetchKeysFailed {
+            FirebaseAuthenticationError::FetchKeysFailed {
                 detail: String::from("Failed to get duration since UNIX_EPOCH"),
                 source: Some(Box::new(err)),
             }
@@ -245,7 +245,7 @@ async fn update_google_keys_cache_if_required() -> Result<(), GoogleAuthenticati
         expires += Duration::new(max_age as u64, 0);
 
         let keys: JsonWebKeys = resp.json().await.map_err(|err| {
-            GoogleAuthenticationError::GoogleKeysParsingFailed {
+            FirebaseAuthenticationError::GoogleKeysParsingFailed {
                 source: Box::new(err),
             }
         })?;
