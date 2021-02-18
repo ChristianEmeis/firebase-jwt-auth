@@ -44,16 +44,16 @@ struct GoogleAuthKeys {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FirebaseClaims {
-    exp: usize,
-    iat: usize,
-    aud: String,
-    iss: String,
-    sub: String,
-    auth_time: usize,
-    user_id: String,
-    email: Option<String>,
-    email_verified: Option<bool>,
-    firebase: Option<serde_json::Value>
+    pub exp: usize,
+    pub iat: usize,
+    pub aud: String,
+    pub iss: String,
+    pub sub: String,
+    pub auth_time: usize,
+    pub user_id: String,
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
+    pub firebase: Option<serde_json::Value>
 }
 
 #[derive(Debug, thiserror::Error)]
