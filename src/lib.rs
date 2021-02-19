@@ -8,20 +8,13 @@ use lazy_static::*;
 use regex::Regex;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::{
-    convert::TryInto,
-    sync::{Arc, Mutex},
-    time::Duration,
-    time::SystemTime,
-    time::UNIX_EPOCH,
-};
+use std::{convert::TryInto, sync::Mutex, time::Duration, time::SystemTime, time::UNIX_EPOCH};
 
 const GOOGLE_JWK_URL: &'static str =
     "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 
 lazy_static! {
-    static ref GOOGLE_PUBLC_KEYS_CACHE: Arc<Mutex<Option<GoogleAuthKeys>>> =
-        Arc::new(Mutex::new(None));
+    static ref GOOGLE_PUBLC_KEYS_CACHE: Mutex<Option<GoogleAuthKeys>> = Mutex::new(None);
 }
 
 #[derive(Deserialize, Debug)]
@@ -53,7 +46,7 @@ pub struct FirebaseClaims {
     pub user_id: String,
     pub email: Option<String>,
     pub email_verified: Option<bool>,
-    pub firebase: Option<serde_json::Value>
+    pub firebase: Option<serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -100,11 +93,12 @@ pub async fn extract_firebase_token_claims(
         .lock()
         .map_err(|_| FirebaseAuthenticationError::KeyCacheMutexLockFailed)?)
     {
-        let token_header =
-            decode_header(token).map_err(|err| FirebaseAuthenticationError::JwtValidationFailed {
+        let token_header = decode_header(token).map_err(|err| {
+            FirebaseAuthenticationError::JwtValidationFailed {
                 detail: Some(String::from("Failed to decode JWT header")),
                 source: Some(err),
-            })?;
+            }
+        })?;
 
         let key_id =
             token_header
@@ -138,10 +132,7 @@ pub async fn extract_firebase_token_claims(
 
         let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.set_audience(&[firebase_id]);
-        validation.iss = Some(format!(
-            "https://securetoken.google.com/{}",
-            firebase_id
-        ));
+        validation.iss = Some(format!("https://securetoken.google.com/{}", firebase_id));
 
         let token_data: TokenData<FirebaseClaims> = decode(token, &decoding_key, &validation)
             .map_err(|err| FirebaseAuthenticationError::JwtValidationFailed {
@@ -250,10 +241,7 @@ async fn update_google_keys_cache_if_required() -> Result<(), FirebaseAuthentica
             }
         })?;
 
-        let keys = GoogleAuthKeys {
-            keys,
-            expires,
-        };
+        let keys = GoogleAuthKeys { keys, expires };
 
         *cached_keys = Some(keys);
     }
