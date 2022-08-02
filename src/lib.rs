@@ -6,9 +6,10 @@ use jsonwebtoken::{decode, DecodingKey, Validation};
 use jsonwebtoken::{decode_header, TokenData};
 use lazy_static::*;
 use regex::Regex;
+use futures::lock::Mutex;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::{convert::TryInto, sync::Mutex, time::Duration, time::SystemTime, time::UNIX_EPOCH};
+use std::{convert::TryInto, time::Duration, time::SystemTime, time::UNIX_EPOCH};
 
 const GOOGLE_JWK_URL: &'static str =
     "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
@@ -90,8 +91,7 @@ pub async fn extract_firebase_token_claims(
     update_google_keys_cache_if_required().await?;
 
     if let Some(ref cached_keys) = *(GOOGLE_PUBLC_KEYS_CACHE
-        .lock()
-        .map_err(|_| FirebaseAuthenticationError::KeyCacheMutexLockFailed)?)
+        .lock().await)
     {
         let token_header = decode_header(token).map_err(|err| {
             FirebaseAuthenticationError::JwtValidationFailed {
@@ -171,7 +171,7 @@ pub async fn extract_firebase_token_claims(
 async fn update_google_keys_cache_if_required() -> Result<(), FirebaseAuthenticationError> {
     let cached_keys = &mut *GOOGLE_PUBLC_KEYS_CACHE
         .lock()
-        .map_err(|_| FirebaseAuthenticationError::KeyCacheMutexLockFailed)?;
+        .await;
 
     let requires_fetch = match *cached_keys {
         Some(ref keys) => {
